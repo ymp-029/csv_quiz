@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CSVクイズ</title>
+<style>
+:root{
+  --bg:#f3f5f2; --surface:#ffffff; --ink:#1f2a27; --sub:#5d6b66; --line:#d5dcd8;
+  --accent:#1f6f5c; --ok:#1d7a46; --okbg:#dff3e6; --ng:#b3382c; --ngbg:#f9e0dc;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#14191a; --surface:#1d2527; --ink:#e6ece9; --sub:#9aa9a3; --line:#33403e;
+    --accent:#5cc3a6; --ok:#6fd49a; --okbg:#1c3a2b; --ng:#f08a7e; --ngbg:#43241f;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#14191a; --surface:#1d2527; --ink:#e6ece9; --sub:#9aa9a3; --line:#33403e;
+  --accent:#5cc3a6; --ok:#6fd49a; --okbg:#1c3a2b; --ng:#f08a7e; --ngbg:#43241f;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"Hiragino Sans","Yu Gothic",Meiryo,system-ui,sans-serif;line-height:1.7}
+main{max-width:640px;margin:0 auto;padding:24px 18px 48px}
+h1{font-size:1.2rem;margin:0 0 4px}
+.meta{color:var(--sub);font-size:.9rem;margin-bottom:14px}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-bottom:22px}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+.q{font-size:1.2rem;font-weight:700;margin:0 0 16px}
+.choices{display:grid;gap:10px}
+.choices button{font:inherit;text-align:left;padding:14px 16px;border:1.5px solid var(--line);
+  background:var(--surface);color:var(--ink);border-radius:10px;cursor:pointer}
+.choices button:hover:enabled{border-color:var(--accent)}
+.choices button:focus-visible,.next:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.choices button.ok{background:var(--okbg);border-color:var(--ok)}
+.choices button.ng{background:var(--ngbg);border-color:var(--ng)}
+.choices button:disabled{cursor:default}
+.exp{margin-top:16px;padding:12px 14px;border-left:4px solid var(--accent);background:var(--surface);border-radius:0 8px 8px 0}
+.next{margin-top:18px;font:inherit;font-weight:700;padding:12px 22px;border:0;border-radius:10px;
+  background:var(--accent);color:var(--bg);cursor:pointer}
+.score{font-size:2.6rem;font-weight:800;margin:6px 0}
+ul.rev{padding-left:1.2em}
+ul.rev li{margin:6px 0}
+.hide{display:none}
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">クイズ</h1>
+  <p class="meta hide" id="note">CSVを読み込めなかったため、ページ内蔵の問題を表示しています。</p>
+  <div class="meta" id="meta"></div>
+  <div class="bar"><i id="bar"></i></div>
+  <section id="play">
+    <p class="q" id="q"></p>
+    <div class="choices" id="choices"></div>
+    <div class="exp hide" id="exp"></div>
+    <button class="next hide" id="next">次の問題へ</button>
+  </section>
+  <section id="result" class="hide">
+    <p class="meta">結果</p>
+    <div class="score" id="score"></div>
+    <div id="review"></div>
+    <button class="next" id="retry">もう一度挑戦する</button>
+  </section>
+</main>
+
+<!-- ▼ 予備のCSV（外部のCSVを読み込めないときに使われる）。1行目はヘッダー。列：問題,正解,誤答1,誤答2,誤答3,解説 （誤答は1〜3個まで、空欄可。値にカンマや改行を含める場合は "…" で囲む） -->
+<script type="text/plain" id="quiz-csv">
+問題,正解,誤答1,誤答2,誤答3,解説
+太陽系で最も大きい惑星は？,木星,土星,天王星,海王星,木星の直径は地球の約11倍です。
+太陽系で最も太陽に近い惑星は？,水星,金星,火星,地球,水星の公転周期は約88日です。
+「赤い惑星」と呼ばれるのは？,火星,金星,木星,水星,表面の酸化鉄（赤さび）が赤く見える理由です。
+土星の特徴として正しいものは？,大きな環を持つ,表面が水で覆われている,自転しない,衛星が1つもない,環は主に氷の粒でできています。
+地球の衛星の数は？,1つ,2つ,0個,4つ,月だけです。
+太陽系で最も高温な惑星は？,金星,水星,火星,木星,濃い二酸化炭素の大気による温室効果で約460℃に達します。
+</script>
+
+<script>
+(function(){
+  "use strict";
+  // 読み込むCSVのURL。同じフォルダの quiz.csv、またはスプレッドシートの「ウェブに公開」CSVのURLに変更できる。
+  // ページのURLの末尾に ?csv=（CSVのURL）を付けると、そのCSVを優先して読み込む。
+  var CSV_URL="quiz.csv";
+  function parseCSV(text){
+    var rows=[],row=[],cur="",q=false,i,c;
+    text=text.replace(/^\s+|\s+$/g,"");
+    for(i=0;i<text.length;i++){
+      c=text[i];
+      if(q){
+        if(c==='"'){ if(text[i+1]==='"'){cur+='"';i++;} else q=false; }
+        else cur+=c;
+      }else if(c==='"'){q=true;}
+      else if(c===","){row.push(cur);cur="";}
+      else if(c==="\n"||c==="\r"){
+        if(c==="\r"&&text[i+1]==="\n")i++;
+        row.push(cur);cur="";rows.push(row);row=[];
+      }else cur+=c;
+    }
+    row.push(cur);rows.push(row);
+    return rows;
+  }
+  function shuffle(a){
+    for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=a[i];a[i]=a[j];a[j]=t;}
+    return a;
+  }
+  var all=[];
+  function setData(text){
+  var raw=parseCSV(text);
+  all=raw.slice(1).filter(function(r){return r[0]&&r[1];}).map(function(r){
+    return {q:r[0].trim(),a:r[1].trim(),wrong:[r[2],r[3],r[4]].filter(function(x){return x&&x.trim();}).map(function(x){return x.trim();}),exp:(r[5]||"").trim()};
+  });
+  }
+  var $=function(id){return document.getElementById(id);};
+  var order,idx,score,wrongList;
+
+  function start(){
+    order=shuffle(all.slice());idx=0;score=0;wrongList=[];
+    $("result").classList.add("hide");$("play").classList.remove("hide");
+    show();
+  }
+  function show(){
+    var item=order[idx];
+    $("meta").textContent="第 "+(idx+1)+" 問 / 全 "+order.length+" 問";
+    $("bar").style.width=(idx/order.length*100)+"%";
+    $("q").textContent=item.q;
+    $("exp").classList.add("hide");$("next").classList.add("hide");
+    var box=$("choices");box.innerHTML="";
+    shuffle([item.a].concat(item.wrong)).forEach(function(t){
+      var b=document.createElement("button");b.type="button";b.textContent=t;
+      b.addEventListener("click",function(){answer(b,t,item);});
+      box.appendChild(b);
+    });
+  }
+  function answer(btn,t,item){
+    var ok=t===item.a;
+    if(ok)score++;else wrongList.push(item);
+    Array.prototype.forEach.call($("choices").children,function(b){
+      b.disabled=true;
+      if(b.textContent===item.a)b.classList.add("ok");
+    });
+    if(!ok)btn.classList.add("ng");
+    var e=$("exp");
+    e.textContent=(ok?"正解です。":"不正解です。正解は「"+item.a+"」です。")+(item.exp?" "+item.exp:"");
+    e.classList.remove("hide");
+    var n=$("next");n.textContent=idx+1<order.length?"次の問題へ":"結果を見る";
+    n.classList.remove("hide");n.focus();
+  }
+  $("next").addEventListener("click",function(){
+    idx++;
+    if(idx<order.length)show();else finish();
+  });
+  function finish(){
+    $("play").classList.add("hide");$("result").classList.remove("hide");
+    $("bar").style.width="100%";$("meta").textContent="終了";
+    $("score").textContent=score+" / "+order.length+" 問正解";
+    var r=$("review");r.innerHTML="";
+    if(wrongList.length){
+      var p=document.createElement("p");p.textContent="間違えた問題";r.appendChild(p);
+      var ul=document.createElement("ul");ul.className="rev";
+      wrongList.forEach(function(it){
+        var li=document.createElement("li");li.textContent=it.q+" → "+it.a;ul.appendChild(li);
+      });
+      r.appendChild(ul);
+    }else{
+      var p2=document.createElement("p");p2.textContent="全問正解です。";r.appendChild(p2);
+    }
+  }
+  $("retry").addEventListener("click",start);
+  var params=new URLSearchParams(location.search);
+  var url=params.get("csv")||CSV_URL;
+  var embedded=document.getElementById("quiz-csv").textContent;
+  function fallback(){
+    setData(embedded);
+    $("note").classList.remove("hide");
+    if(all.length)start();else $("q").textContent="CSVに問題がありません。";
+  }
+  if(url){
+    fetch(url).then(function(r){if(!r.ok)throw new Error("http");return r.text();})
+      .then(function(t){setData(t);if(!all.length)throw new Error("empty");start();})
+      .catch(fallback);
+  }else fallback();
+})();
+</script>
+</body>
+</html>
